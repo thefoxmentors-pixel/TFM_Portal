@@ -9,7 +9,6 @@ load_dotenv()
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 
-# Check for secrets
 try:
     if not url or not key:
         st.error("🚨 Secrets missing! Check your .env file.")
@@ -19,19 +18,17 @@ except Exception as e:
     st.error(f"🚨 Connection Error: {e}")
     st.stop()
 
-# Page Config: Sets the browser tab title and icon
 st.set_page_config(
     page_title="TFM Portal",
     page_icon="🦊",
     layout="wide"
 )
 
-# BRANDING: Add the Logo to the Sidebar
-# This keeps it neat in the top left corner
+# Sidebar Logo (Small and discreet in the corner)
 try:
     st.logo("logo.png")
 except:
-    # Fallback if st.logo fails or file is missing
+    # If no logo file, just show text in sidebar
     st.sidebar.write("🦊 The Fox Mentors")
 
 
@@ -48,26 +45,39 @@ def login_user(email, password):
         st.error(f"Login System Error: {e}")
         return None
 
+def register_user(email, password):
+    """Registers a new student"""
+    # 1. Check if user already exists
+    existing = supabase.table('users').select("*").eq('email', email).execute()
+    if len(existing.data) > 0:
+        return False, "User already exists!"
+    
+    # 2. Add new user
+    try:
+        supabase.table('users').insert({
+            'email': email,
+            'password': password,
+            'type role': 'Student' # Default role
+        }).execute()
+        return True, "Account created! You can now log in."
+    except Exception as e:
+        return False, f"Error: {e}"
+
 def show_admin_dashboard():
     """The Admin Control Panel"""
     st.title("🎛️ Admin Control Room")
     
-    # 1. Fetch Data
+    # Fetch Data
     response = supabase.table('bookings').select("*").order('id').execute()
     rows = response.data
     
     if rows:
         st.subheader(f"📅 Live Booking Queue ({len(rows)})")
-        
-        # 2. Clean up Data for Display
         df = pd.DataFrame(rows)
         
-        # Select and Rename columns for a professional look
-        # We only show what matters
         display_df = df[['id', 'student_name', 'mentor', 'status', 'created_at']]
         display_df.columns = ["ID", "Student Name", "Assigned Mentor", "Status", "Timestamp"]
         
-        # 3. Show Interactive Table
         st.dataframe(
             display_df, 
             use_container_width=True,
@@ -86,8 +96,6 @@ def show_admin_dashboard():
         )
         
         st.divider()
-        
-        # 4. Action Section (Assign Mentor)
         st.subheader("⚡ Quick Actions")
         
         col1, col2, col3 = st.columns(3)
@@ -100,14 +108,13 @@ def show_admin_dashboard():
             selected_mentor = st.selectbox("Assign Mentor", mentors)
             
         with col3:
-            st.write("") # Spacing
-            st.write("") # Spacing
+            st.write("") 
+            st.write("") 
             if st.button("✅ Confirm Assignment", type="primary"):
                 supabase.table('bookings').update({
                     'mentor': selected_mentor, 
                     'status': 'Scheduled'
                 }).eq('id', selected_id).execute()
-                
                 st.success(f"Booking #{selected_id} updated!")
                 st.rerun()
     else:
@@ -120,9 +127,8 @@ def show_student_dashboard(user_email):
     
     col1, col2 = st.columns(2)
     
-    # LEFT: Booking Form (Kept Simple)
     with col1:
-        st.container(border=True) # Adds a nice box around the form
+        st.container(border=True) 
         st.subheader("Book a New Mock")
         with st.form("booking_form"):
             name = st.text_input("Your Full Name")
@@ -142,22 +148,15 @@ def show_student_dashboard(user_email):
                 except Exception as e:
                     st.error(f"Error sending request: {e}")
 
-    # RIGHT: Status Table (The Upgrade)
     with col2:
         st.subheader("My Request Status")
-        
-        # Fetch data
         response = supabase.table('bookings').select("*").eq('student_email', user_email).order('id', desc=True).execute()
         
         if response.data:
             df = pd.DataFrame(response.data)
-            
-            # Filter & Rename Columns
-            # Student doesn't need to see their own email/ID repeatedly
             display_df = df[['created_at', 'mentor', 'status']]
             display_df.columns = ["Requested On", "Assigned Mentor", "Current Status"]
             
-            # specific styling
             st.dataframe(
                 display_df,
                 hide_index=True,
@@ -172,45 +171,65 @@ def show_student_dashboard(user_email):
 
 # --- 3. MAIN APP LOGIC ---
 
-# Initialize Session State
 if 'user' not in st.session_state:
     st.session_state['user'] = None
 
-# VIEW 1: Login Screen (If user is None)
+# VIEW 1: Login / Sign Up Screen
 if st.session_state['user'] is None:
+    
+    # Simple Text Header (No Big Image)
     st.title("The Fox Mentors")
     st.subheader("Internal Portal Login")
-    
-    with st.form("login"):
-        email = st.text_input("Email")
-        pwd = st.text_input("Password", type="password")
-        btn = st.form_submit_button("Login Securely")
-    
-    if btn:
-        user = login_user(email, pwd)
-        if user:
-            st.session_state['user'] = user
-            st.rerun()
-        else:
-            st.error("❌ Invalid Email or Password")
+    st.write("")
 
-# VIEW 2: Dashboard (If user is Logged In)
+    # TABS for Login vs Sign Up
+    tab1, tab2 = st.tabs(["🔐 Login", "📝 Sign Up"])
+    
+    # --- TAB 1: LOGIN ---
+    with tab1:
+        with st.form("login_form"):
+            email = st.text_input("Email Address")
+            pwd = st.text_input("Password", type="password")
+            btn_login = st.form_submit_button("Login Securely", type="primary")
+        
+        if btn_login:
+            user = login_user(email, pwd)
+            if user:
+                st.session_state['user'] = user
+                st.rerun()
+            else:
+                st.error("❌ Invalid Email or Password")
+
+    # --- TAB 2: SIGN UP ---
+    with tab2:
+        st.write("New Student? Create an account here.")
+        with st.form("signup_form"):
+            new_email = st.text_input("Enter Email")
+            new_pwd = st.text_input("Create Password", type="password")
+            btn_signup = st.form_submit_button("Create Account")
+        
+        if btn_signup:
+            if new_email and new_pwd:
+                success, message = register_user(new_email, new_pwd)
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
+            else:
+                st.warning("Please fill in both fields.")
+
+# VIEW 2: Dashboard
 else:
     user = st.session_state['user']
-    
-    # GET ROLE
     role = user.get('type role', 'Student') 
     email = user.get('email')
     
-   # SIDEBAR INFO
     st.sidebar.write(f"Logged in as: **{role}**")
     
-    # THE HARD LOGOUT (Clears everything!)
     if st.sidebar.button("Logout"):
         st.session_state.clear()
         st.rerun()
 
-    # ROUTING
     if role == "Admin":
         show_admin_dashboard()
     elif role == "Student":
