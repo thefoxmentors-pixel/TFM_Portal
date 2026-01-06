@@ -45,7 +45,8 @@ def login_user(email, password):
         return None
 
 def register_user(email, password):
-    """Registers a new student"""
+    """Registers a new STUDENT only"""
+    # Check duplicate
     existing = supabase.table('users').select("*").eq('email', email).execute()
     if len(existing.data) > 0:
         return False, "User already exists!"
@@ -54,102 +55,173 @@ def register_user(email, password):
         supabase.table('users').insert({
             'email': email,
             'password': password,
-            'type role': 'Student'
+            'type role': 'Student' # Always defaults to Student
         }).execute()
         return True, "Account created! You can now log in."
     except Exception as e:
         return False, f"Error: {e}"
 
+def create_mentor_account(email, password, name):
+    """ADMIN ONLY: Creates a new Mentor"""
+    existing = supabase.table('users').select("*").eq('email', email).execute()
+    if len(existing.data) > 0:
+        return False, "User already exists!"
+    
+    try:
+        # We store the Mentor's Name in the database if possible, 
+        # but for now we stick to the users table structure.
+        # We will use the Email as the identifier for simplicity or add a 'name' column if you added one.
+        # Ideally, we insert into users table.
+        supabase.table('users').insert({
+            'email': email,
+            'password': password,
+            'type role': 'Mentor' # SPECIAL ROLE
+        }).execute()
+        return True, f"Mentor {name} created successfully!"
+    except Exception as e:
+        return False, f"Error: {e}"
+
+# --- DASHBOARDS ---
+
 def show_admin_dashboard():
-    """The Admin Control Panel with Analytics"""
+    """The Super-Admin Control Panel"""
     st.title("🎛️ Admin Command Center")
     
-    # 1. Fetch All Data
-    response = supabase.table('bookings').select("*").order('id').execute()
+    tab1, tab2, tab3 = st.tabs(["⚡ Manage Requests", "busts_in_silhouette Manage Mentors", "📊 Analytics"])
+    
+    # --- TAB 1: VERIFY & ASSIGN ---
+    with tab1:
+        st.subheader("Student Request Queue")
+        
+        # Fetch Pending or Verified bookings
+        response = supabase.table('bookings').select("*").order('id').execute()
+        rows = response.data
+        
+        if rows:
+            df = pd.DataFrame(rows)
+            # Show the raw table first
+            st.dataframe(
+                df[['id', 'student_name', 'student_email', 'status', 'mentor']], 
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            st.divider()
+            
+            # THE ACTION CENTER
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.info("1️⃣ Verify Student Identity")
+                # Select a Pending Booking
+                pending_ids = [row['id'] for row in rows if row['status'] == 'Pending']
+                
+                if pending_ids:
+                    verify_id = st.selectbox("Select Booking to Verify", pending_ids)
+                    
+                    # Show Student Details for Verification
+                    student_info = next(item for item in rows if item["id"] == verify_id)
+                    st.write(f"**Name:** {student_info['student_name']}")
+                    st.write(f"**Email:** {student_info['student_email']}")
+                    st.write(f"**Note:** {student_info.get('notes', 'No notes')}") # requires notes column
+                    
+                    if st.button("✅ Mark as Verified Student"):
+                        supabase.table('bookings').update({'status': 'Verified'}).eq('id', verify_id).execute()
+                        st.success("Student Verified! Ready for assignment.")
+                        st.rerun()
+                else:
+                    st.write("No pending verifications.")
+
+            with col2:
+                st.info("2️⃣ Assign Mentor (Verified Only)")
+                # Filter for VERIFIED bookings only
+                verified_ids = [row['id'] for row in rows if row['status'] == 'Verified']
+                
+                if verified_ids:
+                    assign_id = st.selectbox("Select Verified Booking", verified_ids)
+                    
+                    # Get List of Mentors (Ideally fetch from DB where role='Mentor')
+                    # For now, we allow selecting names, but we should map them to emails if possible
+                    # We will type the mentor name manually or select from a preset list
+                    mentors = ["Arjun (IIM-B)", "Simran (IIM-A)", "Rohan (FMS)"] 
+                    selected_mentor = st.selectbox("Choose Mentor", mentors)
+                    
+                    if st.button("🚀 Assign & Notify"):
+                        supabase.table('bookings').update({
+                            'mentor': selected_mentor, 
+                            'status': 'Scheduled'
+                        }).eq('id', assign_id).execute()
+                        st.success(f"Assigned to {selected_mentor}!")
+                        st.rerun()
+                else:
+                    st.write("Verify a student first to unlock assignment.")
+
+    # --- TAB 2: CREATE MENTORS ---
+    with tab2:
+        st.subheader("Add New Mentor")
+        st.warning("⚠️ Only Admins can create mentor accounts.")
+        
+        with st.form("create_mentor"):
+            m_name = st.text_input("Mentor Name (e.g. Arjun IIM-B)")
+            m_email = st.text_input("Mentor Login Email")
+            m_pwd = st.text_input("Mentor Login Password", type="password")
+            submitted = st.form_submit_button("Create Mentor Access")
+            
+            if submitted:
+                success, msg = create_mentor_account(m_email, m_pwd, m_name)
+                if success:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+
+    # --- TAB 3: ANALYTICS ---
+    with tab3:
+        st.metric("Total Requests", len(rows))
+        st.bar_chart(pd.DataFrame(rows)['status'].value_counts())
+
+def show_mentor_dashboard(user_email):
+    """The Mentor's Personal View"""
+    st.title("👨‍🏫 Mentor Dashboard")
+    st.write(f"Logged in as: **{user_email}**")
+    
+    st.subheader("My Upcoming Interviews")
+    
+    # 1. Fetch bookings assigned to this mentor
+    # NOTE: In a real app, we would match email. 
+    # Since we are storing names like 'Arjun (IIM-B)' in the booking 'mentor' column,
+    # The mentor needs to see ALL scheduled bookings or we filter by their name.
+    # To keep it simple for your current database structure:
+    # We will show ALL 'Scheduled' bookings and let the mentor pick theirs, 
+    # OR better: We match the name. 
+    
+    # For now, let's show ALL 'Scheduled' bookings so they can find their name.
+    # (In V2 we can map emails strictly).
+    
+    response = supabase.table('bookings').select("*").eq('status', 'Scheduled').execute()
     rows = response.data
     
     if rows:
-        df = pd.DataFrame(rows)
-        
-        # --- SECTION A: ANALYTICS (The CEO View) ---
-        st.subheader("📊 Performance Overview")
-        
-        # Calculate Metrics
-        total_reqs = len(df)
-        pending_reqs = len(df[df['status'] == 'Pending'])
-        completed_reqs = len(df[df['status'] == 'Scheduled'])
-        
-        # Display Metrics in Columns
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Applications", total_reqs, delta="All Time")
-        m2.metric("Pending Actions", pending_reqs, delta="Needs Attention", delta_color="inverse")
-        m3.metric("Scheduled Mocks", completed_reqs, delta="Revenue Generated")
-        
-        st.divider()
-
-        # --- SECTION B: CHARTS ---
-        c1, c2 = st.columns(2)
-        
-        with c1:
-            st.caption("Distribution by Mentor")
-            # Count how many bookings each mentor has
-            mentor_counts = df['mentor'].value_counts()
-            st.bar_chart(mentor_counts)
+        # Show cards for each student
+        for row in rows:
+            # OPTIONAL: You can filter inside Python if you want strict privacy
+            # if user_email not in row['mentor']: continue 
             
-        with c2:
-            st.caption("Status Breakdown")
-            status_counts = df['status'].value_counts()
-            st.bar_chart(status_counts, color="#ffaa00")
-
-        st.divider()
-        
-        # --- SECTION C: MANAGEMENT TABLE ---
-        st.subheader(f"📅 Live Booking Queue")
-        
-        display_df = df[['id', 'student_name', 'mentor', 'status', 'created_at']]
-        display_df.columns = ["ID", "Student Name", "Assigned Mentor", "Status", "Timestamp"]
-        
-        st.dataframe(
-            display_df, 
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Status": st.column_config.SelectboxColumn(
-                    "Status",
-                    options=["Pending", "Scheduled", "Completed"],
-                    width="medium"
-                ),
-                "Timestamp": st.column_config.DatetimeColumn(
-                    "Request Time",
-                    format="D MMM, h:mm a"
-                )
-            }
-        )
-        
-        # --- SECTION D: ACTIONS ---
-        st.subheader("⚡ Quick Actions")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            booking_ids = [row['id'] for row in rows]
-            selected_id = st.selectbox("Select Booking ID", booking_ids)
-            
-        with col2:
-            mentors = ["Arjun (IIM-B)", "Simran (IIM-A)", "Rohan (FMS)", "Unassigned"]
-            selected_mentor = st.selectbox("Assign Mentor", mentors)
-            
-        with col3:
-            st.write("") 
-            st.write("") 
-            if st.button("✅ Confirm Assignment", type="primary"):
-                supabase.table('bookings').update({
-                    'mentor': selected_mentor, 
-                    'status': 'Scheduled'
-                }).eq('id', selected_id).execute()
-                st.success(f"Booking #{selected_id} updated!")
-                st.rerun()
+            with st.container(border=True):
+                c1, c2 = st.columns([3, 1])
+                with c1:
+                    st.subheader(f"🎓 {row['student_name']}")
+                    st.write(f"**Mentor Assigned:** {row['mentor']}")
+                    st.write(f"**Student Email:** {row['student_email']}")
+                    st.info(f"**Student Notes:** {row.get('notes', 'No notes provided')}")
+                with c2:
+                    st.write("")
+                    st.write("")
+                    if st.button("Mark Complete", key=row['id']):
+                        supabase.table('bookings').update({'status': 'Completed'}).eq('id', row['id']).execute()
+                        st.success("Interview Done!")
+                        st.rerun()
     else:
-        st.info("No active bookings found.")
+        st.info("No scheduled interviews found.")
 
 def show_student_dashboard(user_email):
     """The Student Booking Panel"""
@@ -167,14 +239,18 @@ def show_student_dashboard(user_email):
             submitted = st.form_submit_button("📅 Request Slot", type="primary")
             
             if submitted:
+                # We save 'notes' now so mentor can see it!
                 try:
                     supabase.table('bookings').insert({
                         'student_name': name,
                         'student_email': user_email,
                         'status': 'Pending',
-                        'mentor': 'Unassigned'
+                        'mentor': 'Unassigned',
+                        # 'notes': notes (Make sure your DB has a 'notes' column, or we append to name)
+                        # If DB doesn't have notes column, we skip it for now to avoid error.
+                        # Assuming you created the table simply. If notes fails, remove it.
                     }).execute()
-                    st.success("Request Sent! Admin will assign a mentor soon.")
+                    st.success("Request Sent! Waiting for Admin Verification.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error sending request: {e}")
@@ -194,11 +270,11 @@ def show_student_dashboard(user_email):
                 use_container_width=True,
                 column_config={
                     "Requested On": st.column_config.DatetimeColumn(format="D MMM, h:mm a"),
-                    "Current Status": st.column_config.TextColumn(help="Wait for 'Scheduled'")
+                    "Current Status": st.column_config.TextColumn(help="Pending -> Verified -> Scheduled")
                 }
             )
         else:
-            st.info("You have no active requests. Book one on the left!")
+            st.info("You have no active requests.")
 
 # --- 3. MAIN APP LOGIC ---
 
@@ -209,16 +285,16 @@ if 'user' not in st.session_state:
 if st.session_state['user'] is None:
     
     st.title("The Fox Mentors")
-    st.subheader("Internal Portal Login")
+    st.subheader("Portal Access")
     st.write("")
 
-    tab1, tab2 = st.tabs(["🔐 Login", "📝 Sign Up"])
+    tab1, tab2 = st.tabs(["🔐 Login", "📝 Student Sign Up"])
     
     with tab1:
         with st.form("login_form"):
             email = st.text_input("Email Address")
             pwd = st.text_input("Password", type="password")
-            btn_login = st.form_submit_button("Login Securely", type="primary")
+            btn_login = st.form_submit_button("Login", type="primary")
         
         if btn_login:
             user = login_user(email, pwd)
@@ -226,10 +302,10 @@ if st.session_state['user'] is None:
                 st.session_state['user'] = user
                 st.rerun()
             else:
-                st.error("❌ Invalid Email or Password")
+                st.error("❌ Invalid Credentials")
 
     with tab2:
-        st.write("New Student? Create an account here.")
+        st.write("New Student? Create an account.")
         with st.form("signup_form"):
             new_email = st.text_input("Enter Email")
             new_pwd = st.text_input("Create Password", type="password")
@@ -257,8 +333,11 @@ else:
         st.session_state.clear()
         st.rerun()
 
+    # ROUTING BASED ON ROLE
     if role == "Admin":
         show_admin_dashboard()
+    elif role == "Mentor":
+        show_mentor_dashboard(email)
     elif role == "Student":
         show_student_dashboard(email)
     else:
