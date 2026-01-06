@@ -24,11 +24,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# Sidebar Logo (Small and discreet in the corner)
+# Sidebar Logo
 try:
     st.logo("logo.png")
 except:
-    # If no logo file, just show text in sidebar
     st.sidebar.write("🦊 The Fox Mentors")
 
 
@@ -47,33 +46,65 @@ def login_user(email, password):
 
 def register_user(email, password):
     """Registers a new student"""
-    # 1. Check if user already exists
     existing = supabase.table('users').select("*").eq('email', email).execute()
     if len(existing.data) > 0:
         return False, "User already exists!"
     
-    # 2. Add new user
     try:
         supabase.table('users').insert({
             'email': email,
             'password': password,
-            'type role': 'Student' # Default role
+            'type role': 'Student'
         }).execute()
         return True, "Account created! You can now log in."
     except Exception as e:
         return False, f"Error: {e}"
 
 def show_admin_dashboard():
-    """The Admin Control Panel"""
-    st.title("🎛️ Admin Control Room")
+    """The Admin Control Panel with Analytics"""
+    st.title("🎛️ Admin Command Center")
     
-    # Fetch Data
+    # 1. Fetch All Data
     response = supabase.table('bookings').select("*").order('id').execute()
     rows = response.data
     
     if rows:
-        st.subheader(f"📅 Live Booking Queue ({len(rows)})")
         df = pd.DataFrame(rows)
+        
+        # --- SECTION A: ANALYTICS (The CEO View) ---
+        st.subheader("📊 Performance Overview")
+        
+        # Calculate Metrics
+        total_reqs = len(df)
+        pending_reqs = len(df[df['status'] == 'Pending'])
+        completed_reqs = len(df[df['status'] == 'Scheduled'])
+        
+        # Display Metrics in Columns
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total Applications", total_reqs, delta="All Time")
+        m2.metric("Pending Actions", pending_reqs, delta="Needs Attention", delta_color="inverse")
+        m3.metric("Scheduled Mocks", completed_reqs, delta="Revenue Generated")
+        
+        st.divider()
+
+        # --- SECTION B: CHARTS ---
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            st.caption("Distribution by Mentor")
+            # Count how many bookings each mentor has
+            mentor_counts = df['mentor'].value_counts()
+            st.bar_chart(mentor_counts)
+            
+        with c2:
+            st.caption("Status Breakdown")
+            status_counts = df['status'].value_counts()
+            st.bar_chart(status_counts, color="#ffaa00")
+
+        st.divider()
+        
+        # --- SECTION C: MANAGEMENT TABLE ---
+        st.subheader(f"📅 Live Booking Queue")
         
         display_df = df[['id', 'student_name', 'mentor', 'status', 'created_at']]
         display_df.columns = ["ID", "Student Name", "Assigned Mentor", "Status", "Timestamp"]
@@ -95,7 +126,7 @@ def show_admin_dashboard():
             }
         )
         
-        st.divider()
+        # --- SECTION D: ACTIONS ---
         st.subheader("⚡ Quick Actions")
         
         col1, col2, col3 = st.columns(3)
@@ -174,18 +205,15 @@ def show_student_dashboard(user_email):
 if 'user' not in st.session_state:
     st.session_state['user'] = None
 
-# VIEW 1: Login / Sign Up Screen
+# VIEW 1: Login / Sign Up
 if st.session_state['user'] is None:
     
-    # Simple Text Header (No Big Image)
     st.title("The Fox Mentors")
     st.subheader("Internal Portal Login")
     st.write("")
 
-    # TABS for Login vs Sign Up
     tab1, tab2 = st.tabs(["🔐 Login", "📝 Sign Up"])
     
-    # --- TAB 1: LOGIN ---
     with tab1:
         with st.form("login_form"):
             email = st.text_input("Email Address")
@@ -200,7 +228,6 @@ if st.session_state['user'] is None:
             else:
                 st.error("❌ Invalid Email or Password")
 
-    # --- TAB 2: SIGN UP ---
     with tab2:
         st.write("New Student? Create an account here.")
         with st.form("signup_form"):
