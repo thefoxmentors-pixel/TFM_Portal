@@ -27,11 +27,12 @@ st.set_page_config(
 )
 
 # BRANDING: Add the Logo to the Sidebar
-# ⚠️ Make sure a file named 'logo.png' is in your folder!
+# This keeps it neat in the top left corner
 try:
     st.logo("logo.png")
 except:
-    st.warning("⚠️ Logo not found. Make sure you named the file 'logo.png'")
+    # Fallback if st.logo fails or file is missing
+    st.sidebar.write("🦊 The Fox Mentors")
 
 
 # --- 2. FUNCTIONS ---
@@ -50,28 +51,51 @@ def login_user(email, password):
 def show_admin_dashboard():
     """The Admin Control Panel"""
     st.title("🎛️ Admin Control Room")
-    st.subheader("📅 Live Booking Queue")
     
-    # Fetch all bookings
+    # 1. Fetch Data
     response = supabase.table('bookings').select("*").order('id').execute()
     rows = response.data
     
     if rows:
-        # Display Table
+        st.subheader(f"📅 Live Booking Queue ({len(rows)})")
+        
+        # 2. Clean up Data for Display
         df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True)
+        
+        # Select and Rename columns for a professional look
+        # We only show what matters
+        display_df = df[['id', 'student_name', 'mentor', 'status', 'created_at']]
+        display_df.columns = ["ID", "Student Name", "Assigned Mentor", "Status", "Timestamp"]
+        
+        # 3. Show Interactive Table
+        st.dataframe(
+            display_df, 
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Status": st.column_config.SelectboxColumn(
+                    "Status",
+                    options=["Pending", "Scheduled", "Completed"],
+                    width="medium"
+                ),
+                "Timestamp": st.column_config.DatetimeColumn(
+                    "Request Time",
+                    format="D MMM, h:mm a"
+                )
+            }
+        )
         
         st.divider()
-        st.subheader("⚡ Assign Mentor")
+        
+        # 4. Action Section (Assign Mentor)
+        st.subheader("⚡ Quick Actions")
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            # Select Booking ID
             booking_ids = [row['id'] for row in rows]
             selected_id = st.selectbox("Select Booking ID", booking_ids)
             
         with col2:
-            # Select Mentor
             mentors = ["Arjun (IIM-B)", "Simran (IIM-A)", "Rohan (FMS)", "Unassigned"]
             selected_mentor = st.selectbox("Assign Mentor", mentors)
             
@@ -79,7 +103,6 @@ def show_admin_dashboard():
             st.write("") # Spacing
             st.write("") # Spacing
             if st.button("✅ Confirm Assignment", type="primary"):
-                # Update Database
                 supabase.table('bookings').update({
                     'mentor': selected_mentor, 
                     'status': 'Scheduled'
@@ -88,26 +111,26 @@ def show_admin_dashboard():
                 st.success(f"Booking #{selected_id} updated!")
                 st.rerun()
     else:
-        st.info("No bookings found yet.")
+        st.info("No active bookings found.")
 
 def show_student_dashboard(user_email):
     """The Student Booking Panel"""
     st.title("🎓 Student Dashboard")
-    st.write(f"Logged in as: {user_email}")
+    st.write(f"Logged in as: **{user_email}**")
     
     col1, col2 = st.columns(2)
     
-    # LEFT: Booking Form
+    # LEFT: Booking Form (Kept Simple)
     with col1:
+        st.container(border=True) # Adds a nice box around the form
         st.subheader("Book a New Mock")
         with st.form("booking_form"):
             name = st.text_input("Your Full Name")
             notes = st.text_area("Any specific request? (e.g., IIM-B focus)")
-            submitted = st.form_submit_button("📅 Request Slot")
+            submitted = st.form_submit_button("📅 Request Slot", type="primary")
             
             if submitted:
                 try:
-                    # Insert into Database
                     supabase.table('bookings').insert({
                         'student_name': name,
                         'student_email': user_email,
@@ -119,16 +142,33 @@ def show_student_dashboard(user_email):
                 except Exception as e:
                     st.error(f"Error sending request: {e}")
 
-    # RIGHT: Status Table
+    # RIGHT: Status Table (The Upgrade)
     with col2:
         st.subheader("My Request Status")
-        # Fetch only this student's data
-        response = supabase.table('bookings').select("*").eq('student_email', user_email).execute()
+        
+        # Fetch data
+        response = supabase.table('bookings').select("*").eq('student_email', user_email).order('id', desc=True).execute()
         
         if response.data:
-            st.table(response.data)
+            df = pd.DataFrame(response.data)
+            
+            # Filter & Rename Columns
+            # Student doesn't need to see their own email/ID repeatedly
+            display_df = df[['created_at', 'mentor', 'status']]
+            display_df.columns = ["Requested On", "Assigned Mentor", "Current Status"]
+            
+            # specific styling
+            st.dataframe(
+                display_df,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Requested On": st.column_config.DatetimeColumn(format="D MMM, h:mm a"),
+                    "Current Status": st.column_config.TextColumn(help="Wait for 'Scheduled'")
+                }
+            )
         else:
-            st.info("You have no active requests.")
+            st.info("You have no active requests. Book one on the left!")
 
 # --- 3. MAIN APP LOGIC ---
 
@@ -138,7 +178,7 @@ if 'user' not in st.session_state:
 
 # VIEW 1: Login Screen (If user is None)
 if st.session_state['user'] is None:
-    st.title("🦊 The Fox Mentors")
+    st.title("The Fox Mentors")
     st.subheader("Internal Portal Login")
     
     with st.form("login"):
@@ -158,14 +198,16 @@ if st.session_state['user'] is None:
 else:
     user = st.session_state['user']
     
-    # GET ROLE (Safely handle the column name 'type role')
+    # GET ROLE
     role = user.get('type role', 'Student') 
     email = user.get('email')
     
-    # SIDEBAR INFO
-    st.sidebar.write(f"**{role}**")
+   # SIDEBAR INFO
+    st.sidebar.write(f"Logged in as: **{role}**")
+    
+    # THE HARD LOGOUT (Clears everything!)
     if st.sidebar.button("Logout"):
-        st.session_state['user'] = None
+        st.session_state.clear()
         st.rerun()
 
     # ROUTING
